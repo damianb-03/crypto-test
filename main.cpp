@@ -159,7 +159,9 @@ void connect (const std::string &ipv6_addr,
 	c_UDPasync connection(ipv6_addr, 12325, 12325);
 
 	logger << "connecting...\n";
+	std::cout << "connecting...\n";
 	do_prehandshake(connection);
+	std::cout << "connected with " << ipv6_addr << '\n';
 	logger << "connected with " << ipv6_addr << '\n';
 
 	ecdh_ChaCha20_Poly1305::sharedkey_t shared_key = ecdh_ChaCha20_Poly1305::generate_sharedkey_with(keypair, pubkey);
@@ -182,10 +184,10 @@ void connect (const std::string &ipv6_addr,
 	send.join();
 }
 
-int main (int argc, char **argv) {
+void start (int argc, char **argv) {
 	if (argc < 2) {
 		std::cout << "type --help to show help\n";
-		return 0;
+		return;
 	}
 
 	std::string command = std::string(argv[1]);
@@ -198,7 +200,7 @@ int main (int argc, char **argv) {
 	} else if (command == "--connect") {
 		if (argc < 5) {
 			std::cout << "type --help to show help\n";
-			return 0;
+			return;
 		}
 		std::string ipv6_addr = std::string(argv[2]);
 		ecdh_ChaCha20_Poly1305::pubkey_t pubkey = ecdh_ChaCha20_Poly1305::deserialize_pubkey(std::string(argv[3]));
@@ -209,13 +211,23 @@ int main (int argc, char **argv) {
 	} else if (command == "--gen-conf") {
 		if (argc < 3) {
 			std::cout << "type --help to show help\n";
-			return 0;
+			return;
 		}
 		std::string filename = std::string(argv[2]);
 		generate_config(filename);
 
 	} else {
 		std::cout << "no such command\n";
+	}
+}
+
+int main (int argc, char **argv) {
+	try {
+		start(argc, argv);
+	} catch (std::exception &exc) {
+		std::cout << exc.what() << '\n';
+	} catch (...) {
+		std::cout << "internal error\n";
 	}
 	return 0;
 }
