@@ -164,8 +164,9 @@ ecdh_ChaCha20_Poly1305::nonce_t do_handshake (const std::string &ipv6_addr,
 			auto msg = connection.pop_message();
 			std::cout << "msg: " << msg << '\n';
 			std::cout.flush();
-			if (msg.size() == crypto_box_PUBLICKEYBYTES) {
+			if (msg.size() > 5) { // TODO
 				handshake_pubkey = msg;
+				break;
 			}
 		}
 	}
@@ -179,17 +180,15 @@ ecdh_ChaCha20_Poly1305::nonce_t do_handshake (const std::string &ipv6_addr,
 }
 
 void do_prehandshake (c_UDPasync &connection) { // TODO
-	for (size_t i = 0; i < 20; ++i) {
-		connection.send("");
-	}
+	connection.send("");
+
 	while (!connection.has_messages()) {
 		connection.send("");
 		std::this_thread::sleep_for(std::chrono::milliseconds(5));
 	}
+
 	std::this_thread::sleep_for(std::chrono::seconds(1));
-	for (size_t i = 0; i < 20; ++i) {
-		connection.send("");
-	}
+	connection.send("");
 }
 
 void connect (const std::string &ipv6_addr,
@@ -208,7 +207,7 @@ void connect (const std::string &ipv6_addr,
 
 	logger << "connecting...\n";
 	std::cout << "connecting...\n";
-	do_prehandshake(connection);
+//	do_prehandshake(connection);
 	std::cout << "connected with " << ipv6_addr << '\n';
 	logger << "connected with " << ipv6_addr << '\n';
 
