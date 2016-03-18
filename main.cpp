@@ -98,45 +98,84 @@ ecdh_ChaCha20_Poly1305::keypair_t load_keypair (const std::string &filename) {
 	return result;
 }
 
+//ecdh_ChaCha20_Poly1305::nonce_t do_handshake (const std::string &ipv6_addr,
+//				const ecdh_ChaCha20_Poly1305::pubkey_t &pubkey,
+//				c_UDPasync &connection) {
+//
+//	std::cout << "handshake started...\n";
+//	logger << "handshake started...\n";
+//	auto handshake_keypair = ecdh_ChaCha20_Poly1305::generate_keypair();
+//	std::atomic<bool> stop(false);
+//
+//	auto serialized_handshake_pubkey = ecdh_ChaCha20_Poly1305::serialize(handshake_keypair.pubkey.data(), handshake_keypair.pubkey.size());
+//	auto exec = [&] () {
+//			std::cout << "1 ";
+//			std::cout.flush();
+//			while (!stop && !end) {
+//				std::cout << "2 ";
+//				std::cout.flush();
+//				connection.send(serialized_handshake_pubkey); // TODO
+//				if (connection.has_messages()) {
+//					std::cout << "3 ";
+//					std::cout.flush();
+//					auto msg = connection.pop_message();
+//					std::cout << "msg: " << msg << '\n';
+//					std::cout.flush();
+//					if (msg.size() == crypto_box_PUBLICKEYBYTES) {
+//						return msg;
+//					}
+//				}
+//				std::cout << "4 ";
+//				std::cout.flush();
+//				std::this_thread::yield();
+//			}
+//			throw std::runtime_error("handshake failed");
+//	};
+//
+//	auto task = std::packaged_task<std::string ()>(exec);
+//	auto handle = task.get_future();
+//
+//	if (handle.wait_for(std::chrono::seconds(100000)) == std::future_status::timeout) {
+//		stop = true;
+//		std::this_thread::sleep_for(std::chrono::seconds(1));
+//	} else {
+//		auto handshake_pubkey = ecdh_ChaCha20_Poly1305::deserialize_pubkey(handle.get());
+//		auto result = ecdh_ChaCha20_Poly1305::generate_nonce_with(handshake_keypair, handshake_pubkey);
+//		std::cout << "done\n";
+//		logger << "done\n";
+//		return result;
+//	}
+//	throw std::runtime_error("handshake failed");
+//}
+
 ecdh_ChaCha20_Poly1305::nonce_t do_handshake (const std::string &ipv6_addr,
 				const ecdh_ChaCha20_Poly1305::pubkey_t &pubkey,
 				c_UDPasync &connection) {
 
 	std::cout << "handshake started...\n";
 	logger << "handshake started...\n";
-	auto handshake_keypair = ecdh_ChaCha20_Poly1305::generate_keypair();
-	std::atomic<bool> stop(false);
+	auto my_handshake_keypair = ecdh_ChaCha20_Poly1305::generate_keypair();
+	std::string handshake_pubkey;
 
-	auto exec = [&] () {
-			while (!stop && !end) {
-				connection.send(ecdh_ChaCha20_Poly1305::serialize(handshake_keypair.pubkey.data(), handshake_keypair.pubkey.size())); // TODO
-				if (connection.has_messages()) {
-					auto msg = connection.pop_message();
-					std::cout << "msg: " << msg << '\n';
-					if (msg.size() == crypto_box_PUBLICKEYBYTES) {
-						return msg;
-					}
-				}
-
-				std::this_thread::yield();
+	auto my_handshake_pubkey = ecdh_ChaCha20_Poly1305::serialize(my_handshake_keypair.pubkey.data(), my_handshake_keypair.pubkey.size());
+	while (!end) {
+		connection.send(my_handshake_pubkey); // TODO
+		if (connection.has_messages()) {
+			auto msg = connection.pop_message();
+			std::cout << "msg: " << msg << '\n';
+			std::cout.flush();
+			if (msg.size() == crypto_box_PUBLICKEYBYTES) {
+				handshake_pubkey = msg;
 			}
-			throw std::runtime_error("handshake failed");
-	};
-
-	auto task = std::packaged_task<std::string ()>(exec);
-	auto handle = task.get_future();
-
-	if (handle.wait_for(std::chrono::seconds(10)) == std::future_status::timeout) {
-		stop = true;
-		std::this_thread::sleep_for(std::chrono::seconds(1));
-	} else {
-		auto handshake_pubkey = ecdh_ChaCha20_Poly1305::deserialize_pubkey(handle.get());
-		auto result = ecdh_ChaCha20_Poly1305::generate_nonce_with(handshake_keypair, handshake_pubkey);
-		std::cout << "done\n";
-		logger << "done\n";
-		return result;
+		}
 	}
-	throw std::runtime_error("handshake failed");
+
+	auto deserialized_handshake_pubkey = ecdh_ChaCha20_Poly1305::deserialize_pubkey(handshake_pubkey);
+
+	auto result = ecdh_ChaCha20_Poly1305::generate_nonce_with(my_handshake_keypair, deserialized_handshake_pubkey);
+	std::cout << "done\n";
+	logger << "done\n";
+	return result;
 }
 
 void do_prehandshake (c_UDPasync &connection) { // TODO
@@ -194,6 +233,7 @@ void connect (const std::string &ipv6_addr,
 }
 
 void debug () {
+	std::cout << "DEBUG MODE\n";
 	std::string ipv6_addr, pubkey, config_filename;
 	std::cin >> ipv6_addr >> pubkey >> config_filename;
 	auto keypair = load_keypair(config_filename);
@@ -202,8 +242,9 @@ void debug () {
 
 void start (int argc, char **argv) {
 	if (argc < 2) {
-		std::cout << "type --help to show help\n";
-		return;
+		//		std::cout << "type --help to show help\n";
+		//		return;
+		debug();
 	}
 
 	std::string command = std::string(argv[1]);
@@ -236,7 +277,7 @@ void start (int argc, char **argv) {
 		debug();
 
 	} else {
-		std::cout << "no such command\n";
+		std::cout << "type --help to show help\n";
 	}
 }
 
