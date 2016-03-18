@@ -97,24 +97,6 @@ ecdh_ChaCha20_Poly1305::keypair_t load_keypair (const std::string &filename) {
 	return result;
 }
 
-//bool test (size_t size) {
-//	for (size_t j = 0; j < size; ++j) {
-//		auto keypair = ecdh_ChaCha20_Poly1305::generate_keypair();
-//
-//		auto ser = serialize(keypair.privkey.data(), keypair.privkey.size());
-//		auto des = deserialize_privkey(ser);
-//
-//		for (size_t i = 0; i < keypair.privkey.size() && i < des.size(); ++i) {
-//			if (des[i] != keypair.privkey[i]) {
-//				std::cout << "ERROR KURWAAAAAAA!\n";
-//				return false;
-//			}
-//		}
-//	}
-//	std::cout << "OK\n";
-//	return true;
-//}
-
 void connect (std::string &ipv6_addr,
 				const ecdh_ChaCha20_Poly1305::pubkey_t &pubkey,
 				const ecdh_ChaCha20_Poly1305::keypair_t &keypair) { // TODO
@@ -164,9 +146,9 @@ int main (int argc, char **argv) {
 	std::string command = std::string(argv[1]);
 
 	if (command == "--help") {
-		std::cout << "--help                              show this help\n";
-		std::cout << "--connect [ipv6] [config filename]  connect to [ipv6]\n";
-		std::cout << "--gen-conf [config filename]        generate keypair and save to [config filename]\n";
+		std::cout << "--help                                       show this help\n";
+		std::cout << "--connect [ipv6] [pubkey] [config filename]  connect to [ipv6]\n";
+		std::cout << "--gen-conf [config filename]                 generate keypair and save to [config filename]\n";
 
 	} else if (command == "--connect") {
 		if (argc < 5) {
