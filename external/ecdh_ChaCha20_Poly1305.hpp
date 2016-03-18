@@ -46,6 +46,16 @@ namespace ecdh_ChaCha20_Poly1305 {
 			}
 		}
 
+//		ecdh_handshake_data_t generatehandshake_data () {
+//			ecdh_handshake_data_t result;
+//			randombytes_buf(result.data(), crypto_box_PUBLICKEYBYTES);
+//			return result;
+//		}
+//
+//		nonce_t generate_nonce_with (const ecdh_handshake_data_t &data) {
+//
+//		}
+
 		keypair_t generate_keypair () {
 			privkey_t privkey;
 			pubkey_t pubkey;
@@ -56,7 +66,7 @@ namespace ecdh_ChaCha20_Poly1305 {
 		}
 
 		sharedkey_t generate_sharedkey_with (const keypair_t &keypair, const pubkey_t &pubkey) {
-			sharedkey_t sharedkey = {3, 4, 5};
+			sharedkey_t sharedkey;
 			unsigned char scalar[crypto_scalarmult_BYTES];
 
 			if (crypto_scalarmult(scalar, keypair.privkey.data(), pubkey.data()) != 0) {
@@ -86,6 +96,17 @@ namespace ecdh_ChaCha20_Poly1305 {
 
 			return sharedkey;
 		}
+
+		nonce_t generate_nonce_with (const keypair_t &keypair, const pubkey_t &pubkey) {
+			auto sharedkey = generate_sharedkey_with(keypair, pubkey);
+			nonce_t result;
+			for (size_t i = 0; i < result.size() && i < sharedkey.size(); ++i) {
+				result.at(i) = sharedkey.at(i);
+			}
+
+			return result;
+		}
+
 
 		std::string generate_additional_data (const std::string &data) {
 			return "bebebebebe"; // TODO

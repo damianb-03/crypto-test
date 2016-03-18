@@ -5,6 +5,7 @@
 #include <memory>
 #include <fstream>
 #include <signal.h>
+#include <future>
 #include "external/ecdh_ChaCha20_Poly1305.hpp"
 #include "external/c_UDPasync.hpp"
 
@@ -97,7 +98,42 @@ ecdh_ChaCha20_Poly1305::keypair_t load_keypair (const std::string &filename) {
 	return result;
 }
 
-void connect (std::string &ipv6_addr,
+ecdh_ChaCha20_Poly1305::nonce_t do_handshake (const std::string &ipv6_addr,
+				const ecdh_ChaCha20_Poly1305::pubkey_t &pubkey,
+				c_UDPasync &connection) {
+
+	auto handshake_keypair = ecdh_ChaCha20_Poly1305::generate_keypair();
+	connection.send(ecdh_ChaCha20_Poly1305::serialize(handshake_keypair.pubkey.data(), handshake_keypair.pubkey.size()));
+	std::atomic<bool> stop(false);
+
+	auto exec = [&] () {
+			while (!stop) {
+				if (connection.has_messages()) {
+					auto msg = connection.pop_message();
+					if (msg.size() == crypto_box_PUBLICKEYBYTES)
+						return msg;
+				}
+
+				std::this_thread::yield();
+			}
+			throw std::runtime_error("handshake failed");
+	};
+
+	auto task = std::packaged_task<std::string ()>(exec);
+	auto handle = task.get_future();
+
+	if (handle.wait_for(std::chrono::seconds(10)) == std::future_status::timeout) {
+		stop = true;
+		std::this_thread::sleep_for(std::chrono::seconds(1));
+	} else {
+		auto handshake_pubkey = ecdh_ChaCha20_Poly1305::deserialize_pubkey(handle.get());
+		auto result = ecdh_ChaCha20_Poly1305::generate_nonce_with(handshake_keypair, handshake_pubkey);
+		return result;
+	}
+	throw std::runtime_error("handshake failed");
+}
+
+void connect (const std::string &ipv6_addr,
 				const ecdh_ChaCha20_Poly1305::pubkey_t &pubkey,
 				const ecdh_ChaCha20_Poly1305::keypair_t &keypair) { // TODO
 
@@ -119,7 +155,7 @@ void connect (std::string &ipv6_addr,
 	}
 	cout << '\n';
 
-	ecdh_ChaCha20_Poly1305::nonce_t nonce = {3, 27, 239, 146, 61, 15, 230, 128};
+	ecdh_ChaCha20_Poly1305::nonce_t nonce = do_handshake(ipv6_addr, pubkey, connection);
 
 	logger << "sharedkey: ";
 	for (auto &&c: shared_key) {
