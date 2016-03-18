@@ -167,10 +167,10 @@ int main (int argc, char **argv) {
 			return 0;
 		}
 		std::string ipv6_addr = std::string(argv[2]);
-		std::string pubkey
+		ecdh_ChaCha20_Poly1305::pubkey_t pubkey = ecdh_ChaCha20_Poly1305::deserialize_pubkey(std::string(argv[3]));
 		std::string config_filename = std::string(argv[4]);
 		auto keypair = load_keypair(config_filename);
-		connect(ipv6_addr, keypair);
+		connect(ipv6_addr, pubkey, keypair);
 
 	} else if (command == "--gen-conf") {
 		if (argc < 3) {
