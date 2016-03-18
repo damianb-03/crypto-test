@@ -46,16 +46,6 @@ namespace ecdh_ChaCha20_Poly1305 {
 			}
 		}
 
-//		ecdh_handshake_data_t generatehandshake_data () {
-//			ecdh_handshake_data_t result;
-//			randombytes_buf(result.data(), crypto_box_PUBLICKEYBYTES);
-//			return result;
-//		}
-//
-//		nonce_t generate_nonce_with (const ecdh_handshake_data_t &data) {
-//
-//		}
-
 		keypair_t generate_keypair () {
 			privkey_t privkey;
 			pubkey_t pubkey;

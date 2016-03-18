@@ -158,13 +158,12 @@ ecdh_ChaCha20_Poly1305::nonce_t do_handshake (const std::string &ipv6_addr,
 	std::string handshake_pubkey;
 
 	auto my_handshake_pubkey = ecdh_ChaCha20_Poly1305::serialize(my_handshake_keypair.pubkey.data(), my_handshake_keypair.pubkey.size());
+	connection.send(my_handshake_pubkey);
+
 	while (!end) {
-		connection.send(my_handshake_pubkey); // TODO
 		if (connection.has_messages()) {
 			auto msg = connection.pop_message();
-			std::cout << "msg: " << msg << '\n';
-			std::cout.flush();
-			if (msg.size() > 5) { // TODO
+			if (msg.size() == crypto_box_PUBLICKEYBYTES * 2) {
 				handshake_pubkey = msg;
 				break;
 			}
@@ -207,7 +206,7 @@ void connect (const std::string &ipv6_addr,
 
 	logger << "connecting...\n";
 	std::cout << "connecting...\n";
-//	do_prehandshake(connection);
+	do_prehandshake(connection);
 	std::cout << "connected with " << ipv6_addr << '\n';
 	logger << "connected with " << ipv6_addr << '\n';
 
