@@ -4,6 +4,8 @@
 #include <array>
 #include <memory>
 #include <cassert>
+#include <iomanip>
+#include <sstream>
 
 namespace ecdh_ChaCha20_Poly1305 {
 		typedef std::array<unsigned char, crypto_box_PUBLICKEYBYTES> pubkey_t;
@@ -15,6 +17,28 @@ namespace ecdh_ChaCha20_Poly1305 {
 				privkey_t privkey;
 				pubkey_t pubkey;
 		};
+
+		std::string serialize (const unsigned char *data, size_t size) {
+			std::stringstream result;
+			for (size_t i = 0; i < size; ++i) {
+				result << std::setfill('0') << std::setw(2) << std::hex << int(data[i]);
+			}
+			return result.str();
+		}
+
+		template <size_t N>
+		std::array<unsigned char, N> deserialize (const std::string &data) {
+			std::array<unsigned char, N> result;
+
+			for (size_t i = 0, j = 0; i + 1 < data.size() && j < result.size(); i += 2, ++j) {
+				int r = std::stoi(data.substr(i, 2), nullptr, 16);
+				result.at(j) = r;
+			}
+			return result;
+		}
+
+		auto deserialize_pubkey = deserialize<crypto_box_PUBLICKEYBYTES>; // TODO
+		auto deserialize_privkey = deserialize<crypto_box_SECRETKEYBYTES>; // TODO
 
 		void init () {
 			if (sodium_init() == -1) {
@@ -59,7 +83,7 @@ namespace ecdh_ChaCha20_Poly1305 {
 				}
 			}
 			if (!first || !second) {
-				throw std::runtime_error("error: scalars are equal!");
+				throw std::runtime_error("error: pubkeys are equal!");
 			}
 
 			crypto_generichash_state h;

@@ -11,11 +11,14 @@
 std::fstream logger("./log", std::ios_base::trunc | std::ios_base::in | std::ios_base::out);
 std::atomic<bool> end;
 
-void start_recieving (c_UDPasync &connection, const ecdh_ChaCha20_Poly1305::testing &data) {
+void start_recieving (c_UDPasync &connection,
+				const ecdh_ChaCha20_Poly1305::sharedkey_t &shared_key,
+				const ecdh_ChaCha20_Poly1305::nonce_t &nonce) {
+
 	while (!end) {
 		if (connection.has_messages()) {
 			std::string msg = connection.pop_message();
-			std::string decrypted = ecdh_ChaCha20_Poly1305::decrypt(msg, data.shared_key, data.nonce);
+			std::string decrypted = ecdh_ChaCha20_Poly1305::decrypt(msg, shared_key, nonce);
 
 			logger << "--------- NEW MESSAGE:\n";
 			logger << "encrypted: ";
@@ -36,13 +39,16 @@ void start_recieving (c_UDPasync &connection, const ecdh_ChaCha20_Poly1305::test
 	}
 }
 
-void handle_sending (c_UDPasync &connection, const ecdh_ChaCha20_Poly1305::testing &data) {
+void handle_sending (c_UDPasync &connection,
+				const ecdh_ChaCha20_Poly1305::sharedkey_t &shared_key,
+				const ecdh_ChaCha20_Poly1305::nonce_t &nonce) {
+
 	std::string msg;
 
 	while (!end) {
 		std::cout << "#> ";
 		std::getline(std::cin, msg);
-		std::string encrypted = ecdh_ChaCha20_Poly1305::encrypt(msg, data.shared_key, data.nonce);
+		std::string encrypted = ecdh_ChaCha20_Poly1305::encrypt(msg, shared_key, nonce);
 
 		logger << "--------- MESSAGE SENT:\n";
 		logger << "encrypted: ";
@@ -60,11 +66,57 @@ void handle_sending (c_UDPasync &connection, const ecdh_ChaCha20_Poly1305::testi
 	}
 }
 
-int main (int argc, char **argv) {
-	if (argc < 2) {
-		std::cout << "error\n";
-		return 0;
+
+void generate_config (const std::string &filename) {
+	std::fstream config(filename, std::ios_base::trunc | std::ios_base::in | std::ios_base::out);
+	if (!config.good()) {
+		throw std::runtime_error("error while opening a file: " + filename);
 	}
+
+	auto keypair = ecdh_ChaCha20_Poly1305::generate_keypair();
+	config << ecdh_ChaCha20_Poly1305::serialize(keypair.pubkey.data(), keypair.pubkey.size());
+	config << '\n';
+	config << ecdh_ChaCha20_Poly1305::serialize(keypair.privkey.data(), keypair.privkey.size());
+}
+
+ecdh_ChaCha20_Poly1305::keypair_t load_keypair (const std::string &filename) {
+	std::fstream config(filename, std::ios_base::trunc | std::ios_base::out);
+	if (!config.good()) {
+		throw std::runtime_error("error while opening a file: " + filename);
+	}
+
+	ecdh_ChaCha20_Poly1305::keypair_t result;
+	std::string input;
+
+	config >> input;
+	result.pubkey = ecdh_ChaCha20_Poly1305::deserialize_pubkey(input);
+	config >> input;
+	result.privkey = ecdh_ChaCha20_Poly1305::deserialize_privkey(input);
+
+	return result;
+}
+
+//bool test (size_t size) {
+//	for (size_t j = 0; j < size; ++j) {
+//		auto keypair = ecdh_ChaCha20_Poly1305::generate_keypair();
+//
+//		auto ser = serialize(keypair.privkey.data(), keypair.privkey.size());
+//		auto des = deserialize_privkey(ser);
+//
+//		for (size_t i = 0; i < keypair.privkey.size() && i < des.size(); ++i) {
+//			if (des[i] != keypair.privkey[i]) {
+//				std::cout << "ERROR KURWAAAAAAA!\n";
+//				return false;
+//			}
+//		}
+//	}
+//	std::cout << "OK\n";
+//	return true;
+//}
+
+void connect (std::string &ipv6_addr,
+				const ecdh_ChaCha20_Poly1305::pubkey_t &pubkey,
+				const ecdh_ChaCha20_Poly1305::keypair_t &keypair) { // TODO
 
 	end = false;
 	signal(SIGINT, [] (int) {
@@ -72,30 +124,64 @@ int main (int argc, char **argv) {
 			end = true;
 			logger.close();
 	});
-
-	std::string ipv6_addr = std::string(argv[1]);
-
 	logger << "connected with " << ipv6_addr << '\n';
-
 
 	ecdh_ChaCha20_Poly1305::init();
 	c_UDPasync connection(ipv6_addr, 12325, 12325);
 
-	auto test_data = ecdh_ChaCha20_Poly1305::generate_test_data();
+	ecdh_ChaCha20_Poly1305::sharedkey_t shared_key = ecdh_ChaCha20_Poly1305::generate_sharedkey_with(keypair, pubkey);
+	ecdh_ChaCha20_Poly1305::nonce_t nonce = {3, 27, 239, 146, 61, 15, 230, 128};
 
 	logger << "sharedkey: ";
-	for (auto &&c: test_data.shared_key) {
+	for (auto &&c: shared_key) {
 		logger << int(c) << ' ';
 	}
 	logger << "\nnonce: ";
-	for (auto &&c: test_data.nonce) {
+	for (auto &&c: nonce) {
 		logger << int(c) << ' ';
 	}
 	logger << "\n\n";
 
-	std::thread receive(start_recieving, std::ref(connection), std::ref(test_data));
-	std::thread send(handle_sending, std::ref(connection), std::ref(test_data));
+	std::thread receive(start_recieving, std::ref(connection), std::ref(shared_key), std::ref(nonce));
+	std::thread send(handle_sending, std::ref(connection), std::ref(shared_key), std::ref(nonce));
 	receive.join();
 	send.join();
+}
+
+int main (int argc, char **argv) {
+	if (argc < 2) {
+		std::cout << "type --help to show help\n";
+		return 0;
+	}
+
+	std::string command = std::string(argv[1]);
+
+	if (command == "--help") {
+		std::cout << "--help                              show this help\n";
+		std::cout << "--connect [ipv6] [config filename]  connect to [ipv6]\n";
+		std::cout << "--gen-conf [config filename]        generate keypair and save to [config filename]\n";
+
+	} else if (command == "--connect") {
+		if (argc < 5) {
+			std::cout << "type --help to show help\n";
+			return 0;
+		}
+		std::string ipv6_addr = std::string(argv[2]);
+		std::string pubkey
+		std::string config_filename = std::string(argv[4]);
+		auto keypair = load_keypair(config_filename);
+		connect(ipv6_addr, keypair);
+
+	} else if (command == "--gen-conf") {
+		if (argc < 3) {
+			std::cout << "type --help to show help\n";
+			return 0;
+		}
+		std::string filename = std::string(argv[2]);
+		generate_config(filename);
+
+	} else {
+		std::cout << "no such command\n";
+	}
 	return 0;
 }

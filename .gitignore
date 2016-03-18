@@ -32,6 +32,8 @@
 .idea/*
 *~
 *build*
+*log*
+*config*
 
 # Cmake files
 *.cmake
