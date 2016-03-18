@@ -105,11 +105,11 @@ ecdh_ChaCha20_Poly1305::nonce_t do_handshake (const std::string &ipv6_addr,
 	std::cout << "handshake started...\n";
 	logger << "handshake started...\n";
 	auto handshake_keypair = ecdh_ChaCha20_Poly1305::generate_keypair();
-	connection.send(ecdh_ChaCha20_Poly1305::serialize(handshake_keypair.pubkey.data(), handshake_keypair.pubkey.size()));
 	std::atomic<bool> stop(false);
 
 	auto exec = [&] () {
 			while (!stop && !end) {
+				connection.send(ecdh_ChaCha20_Poly1305::serialize(handshake_keypair.pubkey.data(), handshake_keypair.pubkey.size())); // TODO
 				if (connection.has_messages()) {
 					auto msg = connection.pop_message();
 					std::cout << "msg: " << msg << '\n';
@@ -193,6 +193,13 @@ void connect (const std::string &ipv6_addr,
 	send.join();
 }
 
+void debug () {
+	std::string ipv6_addr, pubkey, config_filename;
+	std::cin >> ipv6_addr >> pubkey >> config_filename;
+	auto keypair = load_keypair(config_filename);
+	connect(ipv6_addr, ecdh_ChaCha20_Poly1305::deserialize_pubkey(pubkey), keypair);
+}
+
 void start (int argc, char **argv) {
 	if (argc < 2) {
 		std::cout << "type --help to show help\n";
@@ -224,6 +231,9 @@ void start (int argc, char **argv) {
 		}
 		std::string filename = std::string(argv[2]);
 		generate_config(filename);
+
+	} else if (command == "--debug") {
+		debug();
 
 	} else {
 		std::cout << "no such command\n";
