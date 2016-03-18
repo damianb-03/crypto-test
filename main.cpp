@@ -80,7 +80,7 @@ void generate_config (const std::string &filename) {
 }
 
 ecdh_ChaCha20_Poly1305::keypair_t load_keypair (const std::string &filename) {
-	std::fstream config(filename, std::ios_base::trunc | std::ios_base::out);
+	std::ifstream config(filename, std::ios_base::out);
 	if (!config.good()) {
 		throw std::runtime_error("error while opening a file: " + filename);
 	}
@@ -88,11 +88,12 @@ ecdh_ChaCha20_Poly1305::keypair_t load_keypair (const std::string &filename) {
 	ecdh_ChaCha20_Poly1305::keypair_t result;
 	std::string input;
 
-	config >> input;
+	std::getline(config, input);
 	result.pubkey = ecdh_ChaCha20_Poly1305::deserialize_pubkey(input);
-	config >> input;
-	result.privkey = ecdh_ChaCha20_Poly1305::deserialize_privkey(input);
 
+	std::getline(config, input);
+	result.privkey = ecdh_ChaCha20_Poly1305::deserialize_privkey(input);
+	config.close();
 	return result;
 }
 
@@ -130,6 +131,12 @@ void connect (std::string &ipv6_addr,
 	c_UDPasync connection(ipv6_addr, 12325, 12325);
 
 	ecdh_ChaCha20_Poly1305::sharedkey_t shared_key = ecdh_ChaCha20_Poly1305::generate_sharedkey_with(keypair, pubkey);
+
+	for (auto &&c : pubkey) {
+		std::cout << int(c) << ' ';
+	}
+	cout << '\n';
+
 	ecdh_ChaCha20_Poly1305::nonce_t nonce = {3, 27, 239, 146, 61, 15, 230, 128};
 
 	logger << "sharedkey: ";
