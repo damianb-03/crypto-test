@@ -102,16 +102,18 @@ ecdh_ChaCha20_Poly1305::nonce_t do_handshake (const std::string &ipv6_addr,
 				const ecdh_ChaCha20_Poly1305::pubkey_t &pubkey,
 				c_UDPasync &connection) {
 
+	std::cout << "handshake started...\n";
+	logger << "handshake started...\n";
 	auto handshake_keypair = ecdh_ChaCha20_Poly1305::generate_keypair();
 	connection.send(ecdh_ChaCha20_Poly1305::serialize(handshake_keypair.pubkey.data(), handshake_keypair.pubkey.size()));
 	std::atomic<bool> stop(false);
 
 	auto exec = [&] () {
-			while (!stop) {
+			while (!stop && !end) {
 				if (connection.has_messages()) {
 					auto msg = connection.pop_message();
+					std::cout << "msg: " << msg << '\n';
 					if (msg.size() == crypto_box_PUBLICKEYBYTES) {
-						std::cout << "msg: " << msg << '\n';
 						return msg;
 					}
 				}
@@ -130,18 +132,25 @@ ecdh_ChaCha20_Poly1305::nonce_t do_handshake (const std::string &ipv6_addr,
 	} else {
 		auto handshake_pubkey = ecdh_ChaCha20_Poly1305::deserialize_pubkey(handle.get());
 		auto result = ecdh_ChaCha20_Poly1305::generate_nonce_with(handshake_keypair, handshake_pubkey);
+		std::cout << "done\n";
+		logger << "done\n";
 		return result;
 	}
 	throw std::runtime_error("handshake failed");
 }
 
-void do_prehandshake (c_UDPasync &connection) {
-	connection.send(""); connection.send(""); connection.send("");
+void do_prehandshake (c_UDPasync &connection) { // TODO
+	for (size_t i = 0; i < 20; ++i) {
+		connection.send("");
+	}
 	while (!connection.has_messages()) {
 		connection.send("");
 		std::this_thread::sleep_for(std::chrono::milliseconds(5));
 	}
-	connection.send(""); connection.send(""); connection.send("");
+	std::this_thread::sleep_for(std::chrono::seconds(1));
+	for (size_t i = 0; i < 20; ++i) {
+		connection.send("");
+	}
 }
 
 void connect (const std::string &ipv6_addr,
