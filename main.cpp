@@ -110,8 +110,10 @@ ecdh_ChaCha20_Poly1305::nonce_t do_handshake (const std::string &ipv6_addr,
 			while (!stop) {
 				if (connection.has_messages()) {
 					auto msg = connection.pop_message();
-					if (msg.size() == crypto_box_PUBLICKEYBYTES)
+					if (msg.size() == crypto_box_PUBLICKEYBYTES) {
+						std::cout << "msg: " << msg << '\n';
 						return msg;
+					}
 				}
 
 				std::this_thread::yield();
@@ -133,6 +135,15 @@ ecdh_ChaCha20_Poly1305::nonce_t do_handshake (const std::string &ipv6_addr,
 	throw std::runtime_error("handshake failed");
 }
 
+void do_prehandshake (c_UDPasync &connection) {
+	connection.send(""); connection.send(""); connection.send("");
+	while (!connection.has_messages()) {
+		connection.send("");
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
+	connection.send(""); connection.send(""); connection.send("");
+}
+
 void connect (const std::string &ipv6_addr,
 				const ecdh_ChaCha20_Poly1305::pubkey_t &pubkey,
 				const ecdh_ChaCha20_Poly1305::keypair_t &keypair) { // TODO
@@ -143,17 +154,15 @@ void connect (const std::string &ipv6_addr,
 			end = true;
 			logger.close();
 	});
-	logger << "connected with " << ipv6_addr << '\n';
 
 	ecdh_ChaCha20_Poly1305::init();
 	c_UDPasync connection(ipv6_addr, 12325, 12325);
 
-	ecdh_ChaCha20_Poly1305::sharedkey_t shared_key = ecdh_ChaCha20_Poly1305::generate_sharedkey_with(keypair, pubkey);
+	logger << "connecting...\n";
+	do_prehandshake(connection);
+	logger << "connected with " << ipv6_addr << '\n';
 
-	for (auto &&c : pubkey) {
-		std::cout << int(c) << ' ';
-	}
-	cout << '\n';
+	ecdh_ChaCha20_Poly1305::sharedkey_t shared_key = ecdh_ChaCha20_Poly1305::generate_sharedkey_with(keypair, pubkey);
 
 	ecdh_ChaCha20_Poly1305::nonce_t nonce = do_handshake(ipv6_addr, pubkey, connection);
 
