@@ -137,8 +137,6 @@ ecdh_ChaCha20_Poly1305::nonce_t do_handshake (const std::string &ipv6_addr,
 
 		auto handshake_pubkey = ecdh_ChaCha20_Poly1305::deserialize_pubkey(handle.get());
 		auto result = ecdh_ChaCha20_Poly1305::generate_nonce_with(handshake_keypair, handshake_pubkey);
-		std::cout << "done\n";
-		logger << "done\n";
 		return result;
 	}
 	throw std::runtime_error("handshake failed");
@@ -187,19 +185,25 @@ void connect (const std::string &ipv6_addr,
 	std::cout << "connected with " << ipv6_addr << '\n';
 	logger << "connected with " << ipv6_addr << '\n';
 
+	std::cout << "generating shared key...\n";
+	logger << "generating shared key...\n";
 	ecdh_ChaCha20_Poly1305::sharedkey_t shared_key = ecdh_ChaCha20_Poly1305::generate_sharedkey_with(keypair, pubkey);
+	std::cout << "done\n";
+	logger << "done\n";
 
 	ecdh_ChaCha20_Poly1305::nonce_t nonce = do_handshake(ipv6_addr, pubkey, connection);
+	std::cout << "done\n";
+	logger << "done\n";
 
-	logger << "sharedkey: ";
-	for (auto &&c: shared_key) {
-		logger << int(c) << ' ';
-	}
-	logger << "\nnonce: ";
-	for (auto &&c: nonce) {
-		logger << int(c) << ' ';
-	}
-	logger << "\n\n";
+//	logger << "sharedkey: ";
+//	for (auto &&c: shared_key) {
+//		logger << int(c) << ' ';
+//	}
+//	logger << "\nnonce: ";
+//	for (auto &&c: nonce) {
+//		logger << int(c) << ' ';
+//	}
+//	logger << "\n\n";
 
 	std::thread receive(start_recieving, std::ref(connection), std::ref(shared_key), std::ref(nonce));
 	std::thread send(handle_sending, std::ref(connection), std::ref(shared_key), std::ref(nonce));

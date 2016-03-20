@@ -34,6 +34,7 @@
 *build*
 *log*
 *config*
+*command*
 
 # Cmake files
 *.cmake
