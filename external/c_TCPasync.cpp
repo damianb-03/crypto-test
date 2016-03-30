@@ -1,15 +1,16 @@
 #include "c_TCPasync.hpp"
 
-const unsigned short header_size = 3;
 // Check if port is correct for us. If not returning default port.
 unsigned short get_port() {
   try {
-    unsigned short port;
-    if(!(std::cin >> port)) {
-        std::string msg = "Invalid port number [" + std::to_string(port) + "]";
+    std::string input;
+    if(!(std::cin >> input)) {
+        std::string msg = "Invalid port number [" + input + "]";
         throw std::invalid_argument(msg);
     }
+    int port = std::stoi(input);
     if(port > 1025 && port < 32000) {
+        std::cin.ignore();
         return port;	// port is OK
     } else {
         std::string msg = "Invalid port number [" + std::to_string(port) + "]";
@@ -18,162 +19,177 @@ unsigned short get_port() {
   } catch (std::invalid_argument &err) {
         std::cout << err.what() << std::endl;
         std::cout << "Set to default port: 30000" << std::endl;
+        std::cin.clear();
+        std::cin.ignore();
         return 30000;
   }
 }
+//////////////////////////////////////////////////////////////////////////////////////////////////// TCPcommand
 
-c_TCPasync::c_TCPasync(int port) :
-                                   server_port(port),
-                                   client_socket(m_io_service),
-                                   server_socket(m_io_service),
-                                   m_acceptor(m_io_service, ip::tcp::endpoint(ip::tcp::v6(),server_port)),
-                                   m_stop_flag(false),
-                                   m_handshake_keypair(ecdh_ChaCha20_Poly1305::generate_keypair()) {
+c_TCPcommand::c_TCPcommand(const protocol cmd_type, const std::__cxx11::string &data) : m_type(cmd_type),
+																						m_response_data(data)
+{ }
 
+protocol c_TCPcommand::get_type() const {
+	return m_type;
+}
+
+void c_TCPcommand::set_response(const std::__cxx11::string &data) {
+	m_response_data = data;
+}
+
+void c_TCPcommand::send_request(ip::tcp::socket &socket) {
+	DBG_MTX(m_mtx, "send_request - protocol[" << (int)m_type << "]");
+    assert(socket.is_open());
+    boost::system::error_code ec;
+    unsigned short type_bytes = sizeof(uint16_t);	// size in bytes of protocol tyle
+
+	std::vector<boost::asio::const_buffer> bufs;
+	bufs.push_back(boost::asio::buffer(&m_type,type_bytes));
+	bufs.push_back(boost::asio::buffer("q",1));
+
+	std::size_t bytes_transfered = socket.write_some(bufs,ec);
+	// DBG_MTX(m_mtx,"transfered: " << bytes_transfered << " =?= " << type_bytes << "+" << 1); //dbg
+	assert(bytes_transfered == (type_bytes+1));
+}
+
+void c_TCPcommand::send_response(ip::tcp::socket &socket) {
+	DBG_MTX(m_mtx, "send_response - protocol[" << (int)m_type << "], data[" << m_response_data << "]");
+    assert(socket.is_open());
+    boost::system::error_code ec;
+    unsigned short type_bytes = sizeof(uint16_t);	// size in bytes of protocol tyle
+	unsigned short size_bytes = sizeof(uint64_t);	// size in bytes of packet data size
+	uint64_t packet_size = m_response_data.size();
+
+	std::vector<boost::asio::const_buffer> bufs;
+	bufs.push_back(boost::asio::buffer(&m_type,type_bytes));
+	bufs.push_back(boost::asio::buffer("s",1));
+	bufs.push_back(boost::asio::buffer(&packet_size, size_bytes));
+	bufs.push_back(boost::asio::buffer(m_response_data, packet_size));
+
+	std::size_t bytes_transfered = socket.write_some(bufs,ec);
+	// DBG_MTX(m_mtx,"transfered: " << bytes_transfered << " =?= " << type_bytes << "+" << 1 << "+" << size_bytes << "+" << packet_size); //dbg
+	assert(bytes_transfered == (type_bytes+size_bytes+packet_size+1));
+}
+
+void c_TCPcommand::get_response(ip::tcp::socket &socket) {
+    DBG_MTX(m_mtx, "get_response - start");
+    assert(socket.is_open());
+    boost::system::error_code ec;
+    unsigned short size_bytes = sizeof(uint64_t);	// size in bytes of packet data size
+
+    uint32_t packet_size = 0;
+    size_t recieved_bytes = socket.read_some(buffer(&packet_size, size_bytes), ec);
+    assert(recieved_bytes == size_bytes);
+
+    const std::unique_ptr<char[]> packet_data(new char[packet_size]);
+    recieved_bytes = socket.read_some(buffer(packet_data.get(), packet_size), ec);
+    assert(recieved_bytes == packet_size);
+
+    std::string recieved_str(packet_data.get(), packet_size);
+    DBG_MTX(m_mtx, "get_response - recieved[" << recieved_str << "]");
+	incoming_box.push(recieved_str);
+}
+
+bool c_TCPcommand::has_message() {
+	return !incoming_box.empty();
+}
+
+std::string c_TCPcommand::pop_message() {
+	if (!has_message()) {
+		throw std::logic_error("No messages to pop");
+	}
+	return incoming_box.pop();
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////// TCPasync
+
+c_TCPasync::c_TCPasync (const std::string &host,
+						unsigned short server_port,
+                        unsigned short local_port) :
+                                                     m_local_socket(m_io_service),
+                                                     m_server_socket(m_io_service),
+                                                     m_local_port(local_port),
+                                                     m_acceptor(m_io_service, ip::tcp::endpoint(ip::tcp::v6(), m_local_port)),
+                                                     m_stop_flag(false) {
+
+    boost::system::error_code ec;
+    m_host_address = ip::address::from_string(host, ec);
+
+    set_target(host,server_port);
     create_server();
     threads_maker(2);
 }
 
-int c_TCPasync::get_server_port() {
-    return server_port;
-}
-
-bool c_TCPasync::wait_for_connection(const std::string &ip_address, std::chrono::seconds wait, int port) {
-    DBG_MTX(dbg_mtx, "* check connection *");
+void c_TCPasync::set_target(const std::string &host, unsigned short server_port) {
+    m_server_socket.close();
 
     boost::system::error_code ec;
-    ip::address addr = ip::address::from_string(ip_address, ec);
+    m_host_address = ip::address::from_string(host, ec);
+    m_server_endpoint = ip::tcp::endpoint(m_host_address, server_port);
+    if (!connect()) {
+        DBG_MTX(m_mtx, "connection with host: success");
+    } else {
+        DBG_MTX(m_mtx, "connsection with host: fail");
+        throw std::invalid_argument("unable connect to host");
+    }
+}
 
-    if (!addr.is_v6()) {
-        std::string msg = addr.to_string();
+bool c_TCPasync::connect(std::chrono::seconds wait) {
+    DBG_MTX(m_mtx, "* check connection *");
+
+    boost::system::error_code ec;
+
+    if (!m_host_address.is_v6()) {	// for now handling only ipv6 addr
+        std::string msg = m_host_address.to_string();
         msg += ec.message() + " : is not valid IPv6 address";
         throw std::invalid_argument(msg);
     }
-    ip::tcp::endpoint server_endpoint(addr, port);
-
-    ip::tcp::socket socket_(m_io_service);
 
     int attempts = 5;
     do {
-        socket_.connect(server_endpoint, ec);
+        m_server_socket.connect(m_server_endpoint, ec);
         std::this_thread::sleep_for(wait/5);
         if(ec) {
-            DBG_MTX(dbg_mtx, "attempt " << attempts << " fail to connct");
+            DBG_MTX(m_mtx, "attempt " << attempts << " fail to connect");
             if(attempts == 0) {
                 return 1;	// fail to connect in wait time
             }
         } else {
-            DBG_MTX(dbg_mtx, "connect with " << ip_address << " success");
+            DBG_MTX(m_mtx, "connect with " << m_host_address.to_string() << " on " << get_server_port() << " port success");
             break;
         }
-
-    } while(!ec);
-    socket_.close();
+        attempts--;
+    } while(true);
     return 0;
 }
 
-//////////////////////////////////////////////////////////////////////////////////////////////////// networking
-
-ecdh_ChaCha20_Poly1305::nonce_t c_TCPasync::do_handshake(const std::string &ip_address, int port) {
-
-    boost::system::error_code ec;
-    ip::address addr = ip::address::from_string(ip_address, ec);
-    if (!addr.is_v6()) {
-        std::string msg = addr.to_string();
-        msg += ec.message()+" : is not valid IPv6 address";
-        throw std::invalid_argument(msg);
-    }
-    ip::tcp::endpoint server_endpoint(addr, port);
-
-    ip::tcp::socket socket_(m_io_service);
-    socket_.connect(server_endpoint, ec);
-    if (ec) {
-        DBG_MTX(dbg_mtx,"EC = " << ec);
-        throw std::runtime_error("do_handshake -- fail to connect");
-    }
-
-    DBG_MTX(dbg_mtx, "Do handshake: getting sender public key");
-    send_handshake_request(socket_);
-    std::string handshake_packet(get_handshake_response(socket_));
-
-    while(!handshake_ok) {
-        std::this_thread::yield();
-    }
-
-    ecdh_ChaCha20_Poly1305::pubkey_t handshake_pubkey = ecdh_ChaCha20_Poly1305::deserialize_pubkey(handshake_packet);
-
-    DBG_MTX(dbg_mtx, "handshake packet: " << handshake_packet);
-    //std::cout << "handshake pubkey: " << handshake_pubkey << std::endl;
-
-    auto result = ecdh_ChaCha20_Poly1305::generate_nonce_with(m_handshake_keypair, handshake_pubkey);
-
-    socket_.close();
-    return result;
+void c_TCPasync::add_cmd(c_TCPcommand &cmd) {
+	protocol type = cmd.get_type();
+	auto cmd_it = find_cmd(type);
+	if(cmd_it == m_available_cmd.end()) {
+		m_available_cmd.push_back(std::ref(cmd));
+	} else {
+		DBG_MTX(m_mtx, "can't add cmd[" << static_cast<int>(type) << " that already is available");
+	}
 }
 
-std::string c_TCPasync::get_handshake_response(ip::tcp::socket &socket_) {
-
-    assert(socket_.is_open());
-    boost::system::error_code ec;
-
-    char header[header_size];
-    // DBG_MTX(dbg_mtx, "read header"); // dbg
-    size_t pkresp = socket_.read_some(buffer(header, header_size), ec);
-    // DBG_MTX(dbg_mtx, "get handshake response: " << pkresp << ":[" << header[0]
-    //																 << header[1]
-    //        														 << header[2] << "]");
-    assert(pkresp == header_size);
-
-    size_t pub_key_size = 4;
-    uint32_t key_size = 0;
-    size_t recieved_bytes = socket_.read_some(buffer(&key_size, pub_key_size), ec);
-    DBG_MTX(dbg_mtx, "size:" << recieved_bytes << ":[" <<key_size << "]");
-
-    assert(recieved_bytes == pub_key_size);
-
-    const std::unique_ptr<char[]> pub_key_data(new char[key_size]);
-
-    DBG_MTX(dbg_mtx, "read public key data");
-    recieved_bytes = socket_.read_some(buffer(pub_key_data.get(), key_size), ec);
-    assert(recieved_bytes == key_size);
-
-    std::string pub_key(pub_key_data.get(), key_size);
-    return pub_key;
+void c_TCPasync::send_cmd_request(protocol type) {
+	auto cmd = find_cmd(type);
+	if(cmd == m_available_cmd.end()) {
+		throw std::invalid_argument("Protocol not allowed/added in this connection");
+	};
+	cmd->get().send_request(m_server_socket);
 }
 
-void c_TCPasync::send_handshake_request(ip::tcp::socket &socket) {
 
-    DBG_MTX(dbg_mtx, "send handshake request");
-    assert(socket.is_open());
-    boost::system::error_code ec;
-    char handshake_send_req[header_size] = {'h','r','q'};
-    size_t sendbytes = socket.write_some(boost::asio::buffer(handshake_send_req, 3),ec);
-    //DBG_MTX(dbg_mtx, "hrq: " << sendbytes << ":[" << handshake_send_req[0]
-    //                                              << handshake_send_req[1]
-    //                                              << handshake_send_req[2] << "]");
+
+unsigned short c_TCPasync::get_server_port() {
+	unsigned short server_port = m_server_endpoint.port();
+	return server_port;
 }
-
-void c_TCPasync::send_handshake_response(ip::tcp::socket &socket) {
-
-    DBG_MTX(dbg_mtx, "send handshake response");
-    assert(socket.is_open());
-    boost::system::error_code ec;
-    char header[header_size] = {'h', 'r','s'};
-    // DBG_MTX(dbg_mtx, "hs_resp: send header"); // dbg
-    socket.write_some(buffer(header, header_size), ec);
-
-    auto packet = ecdh_ChaCha20_Poly1305::serialize(m_handshake_keypair.pubkey.data(),
-                                                    m_handshake_keypair.pubkey.size());
-
-    uint32_t packet_size = packet.size();
-    // DBG_MTX(dbg_mtx,"hs_resp: send public key size" << "[" << packet_size << "]"); // dbg
-    socket.write_some(boost::asio::buffer(&packet_size, 4), ec);
-
-    DBG_MTX(dbg_mtx,"hs_resp: send public key data" << "[" << packet << "]");
-    socket.write_some(boost::asio::buffer(packet.c_str(), packet_size), ec);
-    DBG_MTX(dbg_mtx,"end of handshake response");
-
-    handshake_ok = true;
+unsigned short c_TCPasync::get_local_port() {
+	return m_local_port;
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////// networking
@@ -183,51 +199,92 @@ void c_TCPasync::create_server() {
         std::this_thread::yield();
     }
     if (m_stop_flag) {
-        DBG_MTX(dbg_mtx, "stop flag, return");
+        DBG_MTX(m_mtx, "stop flag, return");
         return;
     }
     assert(m_io_service.stopped() == false);
-    m_acceptor.async_accept(server_socket,
+    m_acceptor.async_accept(m_local_socket,
                             [this](boost::system::error_code ec) {
-                                // DBG_MTX(dbg_mtx,"async lambda"); // dbg
+                                // DBG_MTX(m_mtx,"async lambda"); // dbg
                                 if(!ec) {
-                                    // DBG_MTX(dbg_mtx,"do read start"); // dbg
-                                    this->server_read(std::move(server_socket));
+                                    // DBG_MTX(m_mtx,"do read start"); // dbg
+                                    this->server_read(std::move(m_local_socket));
                                 } else {
-                                    DBG_MTX(dbg_mtx,"EC = " << ec);
+                                    DBG_MTX(m_mtx,"EC = " << ec);
                                 }
                                 this->create_server();
                             });
 }
 
-void c_TCPasync::server_read(ip::tcp::socket socket_) {
-    DBG_MTX(dbg_mtx, "START");
-    assert(socket_.is_open());
+void c_TCPasync::server_read(ip::tcp::socket socket) {
+    assert(socket.is_open());
+    assert(m_server_socket.is_open());
     boost::system::error_code ec;
-    DBG_MTX(dbg_mtx,"server read");
+    unsigned short prototype_size = sizeof(uint16_t);
+
     while (!ec && !m_stop_flag) {
-        char header[header_size] = {0, 0, 0};
-        socket_.read_some(buffer(header, header_size), ec);
-        // if hendshake packet request detected
-        if (header[0] == 'h' && header[1] == 'r' && header[2] == 'q') {
-            send_handshake_response(socket_);
+        protocol type = protocol::empty;
+		socket.read_some(buffer(&type, prototype_size), ec);
+		if(type == protocol::empty) {
+			DBG_MTX(m_mtx, "discard packet with empty protocol type");
+			break;
+		}
+
+        m_mtx.lock();
+        auto cmd = std::find_if(m_available_cmd.begin(),
+                                m_available_cmd.end(),
+                                [type] (const std::reference_wrapper<c_TCPcommand> &i) {
+									if(i.get().get_type() == type) {
+                                        return true;
+                                    }
+                                return false;
+                                });
+        m_mtx.unlock();
+        if(cmd == m_available_cmd.end()) {
+			DBG_MTX(m_mtx,"server read: no available cmd found - type[" << static_cast<int>(type) << "]");
+            break;
+        };
+        char re = '\0';
+		socket.read_some(buffer(&re, 1), ec);	// request or response msg
+		// DBG_MTX(m_mtx,"req or res: " << re); //dbg
+        if (re == 'q') {
+			// DBG_MTX(m_mtx,"server read: get request"); //dbg
+            cmd->get().send_response(m_server_socket);
+        } else if (re == 's') {
+			// DBG_MTX(m_mtx,"server read - get response"); //dbg
+			cmd->get().get_response(socket);
         }
     }
-    socket_.close();
+	socket.close();
+}
+
+std::vector<std::reference_wrapper<c_TCPcommand>>::iterator c_TCPasync::find_cmd(protocol type) {
+	m_mtx.lock();
+	auto cmd = std::find_if(m_available_cmd.begin(),
+							m_available_cmd.end(),
+							[type] (const std::reference_wrapper<c_TCPcommand> &i) {
+		if(i.get().get_type() == type) {
+			return true;
+		}
+		return false;
+	});
+	m_mtx.unlock();
+	return cmd;
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////// networking
 
 c_TCPasync::~c_TCPasync() {
-    m_stop_flag = true;
-    m_io_service.stop();
-    for (auto &t : m_threads) {
-        t.join();
-    }
+	m_server_socket.close();
+	m_stop_flag = true;
+	m_io_service.stop();
+	for (auto &t : m_threads) {
+		t.join();
+	}
 }
 
-void c_TCPasync::threads_maker(unsigned num) {
-    m_threads.reserve(num);
+void c_TCPasync::threads_maker(unsigned short num) {
+	m_threads.reserve(num);
     for (unsigned i = 0; i < num; ++i) {
         // DBG_MTX(dbg_mtx,"make " << i << " thread"); // dbg
         m_threads.emplace_back([this](){

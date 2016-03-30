@@ -145,6 +145,40 @@ ecdh_ChaCha20_Poly1305::nonce_t do_handshake (const std::string &ipv6_addr,
 	throw std::runtime_error("handshake failed");
 }
 
+ecdh_ChaCha20_Poly1305::nonce_t tcp_do_handshake(c_TCPasync &connection,
+												 c_TCPcommand &cmd,
+												 std::chrono::seconds wait = std::chrono::seconds(20)) {
+
+	auto hshake_keypair = ecdh_ChaCha20_Poly1305::generate_keypair();
+	auto serialized_hshake_pubkey = ecdh_ChaCha20_Poly1305::serialize(hshake_keypair.pubkey.data(),
+																	  hshake_keypair.pubkey.size());
+	cmd.set_response(serialized_hshake_pubkey);
+	connection.add_cmd(cmd);
+	std::this_thread::sleep_for(wait/10);	// wait for establish a connection
+	connection.send_cmd_request(protocol::handshake);
+
+	std::string handle;
+	int attempts = 5;
+	do {
+		if(cmd.has_message()) {
+			handle = cmd.pop_message();
+			break;
+		} else {
+			std::cout << "Attempt: " << attempts << " waiting for response" << std::endl;
+			std::this_thread::sleep_for(wait/10);
+		}
+		if(attempts == 0) {
+			throw std::runtime_error("Fail to get handshake response in wait time");
+		}
+		attempts--;
+	} while(true);
+
+	auto hshake_pubkey = ecdh_ChaCha20_Poly1305::deserialize_pubkey(handle);
+	auto result_nonce = ecdh_ChaCha20_Poly1305::generate_nonce_with(hshake_keypair, hshake_pubkey);
+
+	return result_nonce;
+}
+
 void do_prehandshake (c_UDPasync &connection) { // TODO
 	std::atomic<bool> stop(false);
 	logger << "connecting...\n";
@@ -185,24 +219,16 @@ void connect (const std::string &ipv6_addr,
     ecdh_ChaCha20_Poly1305::sharedkey_t shared_key = ecdh_ChaCha20_Poly1305::generate_sharedkey_with(keypair, pubkey);
     ecdh_ChaCha20_Poly1305::nonce_t nonce;
 
-    std::cout << "#> Set your port: ";
-    unsigned short my_port = get_port();
-    std::cout << "#> Set target port: ";
-    unsigned short tg_port = get_port();
+    std::cout << "#> Set your local port: ";
+    unsigned short local_port = get_port();
+    std::cout << "#> Set target server port: ";
+    unsigned short server_port = get_port();
 
-    c_TCPasync tcp_connection(my_port);
-    if(tcp_connection.wait_for_connection(ipv6_addr, std::chrono::seconds(60), tg_port)) {
-        logger << "tcp connection fail" << '\n';
-        std::cout << "tcp connection fail" << '\n';
-    }
+	c_TCPasync tcp_connection(ipv6_addr, server_port, local_port);
+	c_TCPcommand handshake_cmd(protocol::handshake);
+	nonce = tcp_do_handshake(tcp_connection, handshake_cmd);
 
-    std::cout << "TCPasync: connected with " << ipv6_addr << " on port " << tg_port << '\n';
-    logger << "TCPasync: connected with " << ipv6_addr << " on port " << tg_port << '\n';
-    nonce = tcp_connection.do_handshake(ipv6_addr, tg_port);
-
-    c_UDPasync udp_connection(ipv6_addr, my_port, tg_port);
-    do_prehandshake(udp_connection);
-    //ecdh_ChaCha20_Poly1305::nonce_t nonce = do_handshake(ipv6_addr, pubkey, udp_connection);
+	//ecdh_ChaCha20_Poly1305::nonce_t nonce = do_handshake(ipv6_addr, pubkey, udp_connection);	//old
 
     std::cout << "\nsharedkey: ";
     logger << "sharedkey: ";
@@ -219,8 +245,11 @@ void connect (const std::string &ipv6_addr,
 	logger << "\n\n";
     std::cout << "\n\n";
 
-    std::cout << "UDPasync: connected with " << ipv6_addr << " on port " << tg_port << '\n';
-    logger << "UDPasync: connected with " << ipv6_addr << " on port " << tg_port << '\n';
+	c_UDPasync udp_connection(ipv6_addr, server_port, local_port);
+	do_prehandshake(udp_connection);
+
+    std::cout << "UDPasync: connected with " << ipv6_addr << " on port " << server_port << '\n';
+    logger << "UDPasync: connected with " << ipv6_addr << " on port " << server_port << '\n';
 
 
     std::thread receive(start_recieving, std::ref(udp_connection), std::ref(shared_key), std::ref(nonce));
@@ -291,7 +320,7 @@ void start (int argc, char **argv) {
 }
 
 int main (int argc, char **argv) {
-	try {
+    try {
 		start(argc, argv);
 	} catch (std::exception &exc) {
 		std::cout << exc.what() << '\n';
